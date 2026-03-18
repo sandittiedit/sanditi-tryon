@@ -33,6 +33,10 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash-image",
             contents: prompt,
+            // CRITICAL FIX: You must tell the AI to output an image, otherwise it defaults to text.
+            config: {
+                responseModalities: ["IMAGE"] 
+            }
         });
 
         const generatedImage = response.candidates[0].content.parts.find(part => part.inlineData);
