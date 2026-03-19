@@ -16,16 +16,19 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         
         let prompt = [];
 
-        // MODE 1: VIRTUAL TRY-ON (2 Images Received)
+        //MODE 1: VIRTUAL TRY-ON (2 Images Received: Customer + Garment)
         if (req.files['garmentImage']) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-            let textPrompt = `You are a strict virtual fitting room AI. Your ONLY job is to transfer the garment from Image 2 onto the person in Image 1. 
-            RULES:
-            1. DO NOT REDESIGN: Preserve every single detail of the garment in Image 2. Exact embroidery, print, colors, and sleeves. 
-            2. PERFECT FIT: Drape the garment realistically to match the exact body of the person in Image 1. 
-            3. PRESERVE IDENTITY: Do not change the user's face, skin tone, or background.`;
+            //--- HYPER-DETAILED, ZERO-HALLUCINATION VTON PROMPT ---
+            let textPrompt = `You are an ultra-precise, state-of-the-art virtual fitting room AI for a high-end luxury brand. Your only job is to flawlessly transfer the garment from Image 2 onto the person in Image 1.
+            
+            CRITICAL RULES (ZERO DEVIATION ALLOWED):
+            1. PIXEL-PERFECT CLOTHING: Image 2 is the non-negotiable definition of the garment. You must transfer every single detail. Do not change the embroidery, print pattern, colors, button placement, or the fabric's drape and texture. Preserve the neckline structure and sleeve width exactly. ZERO REDESIGN or "CREATIVITY."
+            2. REALISTIC FIT & HEIGHT: Adjust the garment's fit according to the exact height and body type of the person in Image 1. It must look as if it was tailored for them. Match the scale perfectly. 
+            3. PRESERVE IDENTITY: Do not change the face, skin tone, or hair of the person in Image 1. 
+            4. DESTROY & REPLACE BACKGROUND: In order to ensure a perfect fit, first completely extract the customer and the new garment from their previous environments. Then, place them into a clean version of the Image 1 background. Remove ALL trace elements from the Image 1 background (like other objects, furniture, or distracting elements). The result must be hyper-realistic.`;
 
             prompt = [
                 { text: textPrompt },
@@ -34,16 +37,17 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
             ];
         } 
         
-        // MODE 2: MOMENT GENERATION (1 Image + Text Prompt Received)
-        // This is significantly cheaper because there is only 1 image input!
+        //MODE 2: CHEAPER, HYPER-TRANSPORT MOMENT MODE (1 Image Received: Generated Try-On Look + Text Prompt)
         else if (customBackground) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             
-            let textPrompt = `You are a professional photographer AI. Your job is to change the background of this image.
-            RULES:
-            1. DO NOT touch the person, their face, their skin tone, or their clothing. Keep them EXACTLY the same.
-            2. Change the background behind the person to realistically match this setting: ${customBackground}. 
-            3. Integrate the lighting naturally.`;
+            //--- HYPER-DETAILED MOMENT PROMPT ---
+            let textPrompt = `You are an ultra-professional photographer AI. Your job is to change the environment of this person.
+            
+            CRITICAL RULES:
+            1. PIXEL-PERFECT SUBJECT: Maintain the person, their face, their hair, their skin tone, AND their specific luxury clothing EXACTLY as they appear in Image 1. ZERO CHANGES.
+            2. SCRAPE & DESTROY BACKGROUND: You must completely and totally remove ALL elements of the original Image 1 background, including any furniture, buildings, vegetation, or trees. All trace elements must be scraped off. 
+            3. CREATE NEW REALITY: Place the person, with zero changes to their appearance, into a hyper-realistic, super-detailed luxury background matching this setting: ${customBackground}. Integrate the new lighting naturally and precisely, matching the mood of the setting. If the setting (like a dark date night) requires, the AI may subtly optimize the subject's pose for realism while maintaining their core identity.`;
 
             prompt = [
                 { text: textPrompt },
