@@ -12,29 +12,46 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentImage' }]), async (req, res) => {
     try {
-        const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
-        const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
-        const customBackground = req.body.backgroundPrompt; // For the "Moments" feature
+        const customBackground = req.body.backgroundPrompt; 
+        
+        let prompt = [];
 
-        // THE HYPER-DETAILED VTON PROMPT
-        let textPrompt = `You are an ultra-precise virtual fitting room AI. Your ONLY job is to transfer the garment from Image 2 onto the person in Image 1. 
-        CRITICAL RULES:
-        1. ZERO REDESIGN: You must flawlessly preserve every single detail of the garment in Image 2. Do not change the embroidery, print, colors, buttons, or fabric texture. 
-        2. PERFECT FIT: Drape the garment realistically to match the exact height, body shape, and posture of the person in Image 1. Follow gravity and natural fabric folds.
-        3. PRESERVE IDENTITY: Do not change the user's face, skin tone, or hair.`;
+        // MODE 1: VIRTUAL TRY-ON (2 Images Received)
+        if (req.files['garmentImage']) {
+            const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
+            const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-        // If a moment button was clicked, add the background instruction
-        if (customBackground) {
-            textPrompt += `\n4. ENVIRONMENT: Change the background behind the user to realistically match this setting: ${customBackground}. Integrate the lighting naturally.`;
+            let textPrompt = `You are a strict virtual fitting room AI. Your ONLY job is to transfer the garment from Image 2 onto the person in Image 1. 
+            RULES:
+            1. DO NOT REDESIGN: Preserve every single detail of the garment in Image 2. Exact embroidery, print, colors, and sleeves. 
+            2. PERFECT FIT: Drape the garment realistically to match the exact body of the person in Image 1. 
+            3. PRESERVE IDENTITY: Do not change the user's face, skin tone, or background.`;
+
+            prompt = [
+                { text: textPrompt },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
+                { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
+            ];
+        } 
+        
+        // MODE 2: MOMENT GENERATION (1 Image + Text Prompt Received)
+        // This is significantly cheaper because there is only 1 image input!
+        else if (customBackground) {
+            const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
+            
+            let textPrompt = `You are a professional photographer AI. Your job is to change the background of this image.
+            RULES:
+            1. DO NOT touch the person, their face, their skin tone, or their clothing. Keep them EXACTLY the same.
+            2. Change the background behind the person to realistically match this setting: ${customBackground}. 
+            3. Integrate the lighting naturally.`;
+
+            prompt = [
+                { text: textPrompt },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
+            ];
         } else {
-            textPrompt += `\n4. ENVIRONMENT: Keep the original background from Image 1 exactly the same.`;
+            return res.status(400).json({ error: "Missing required images or prompts." });
         }
-
-        const prompt = [
-            { text: textPrompt },
-            { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
-            { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
-        ];
 
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash-image",
