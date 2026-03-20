@@ -9,7 +9,7 @@ app.use(express.json());
 
 const upload = multer({ 
     storage: multer.memoryStorage(),
-    limits: { fileSize: 8 * 1024 * 1024 } 
+    limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -26,7 +26,7 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-            // 1. GENERATE THE IMAGE (Strict constraints for Pakistani-style digital prints)
+            // 1. GENERATE THE IMAGE 
             const imagePrompt = [
                 { text: `VIRTUAL TRY-ON TASK. Image 1 is the customer. Image 2 is the target garment (luxury Sanditi Pakistani-style digital printed/embroidered co-ord or kaftan). TASK: Redraw Image 1 so the customer is wearing the exact garment from Image 2. MANDATORY: You MUST preserve the customer's exact face, identity, hair, and the original background from Image 1. Only the clothing should change. Do not hallucinate or change the patterns.` },
                 { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
@@ -46,38 +46,40 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                 throw new Error("AI did not return image data.");
             }
 
-            // 2. GENERATE THE STYLING & UPSELL (Fast Text Model)
+            // 2. GENERATE THE STYLING & UPSELL
             console.log(`🛍️ [SERVER] Generating Styling & Upsell Data...`);
-            const textResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash", // Extremely fast & cheap for text
-                contents: [
-                    { text: `Analyze the garment in Image 2. Return a valid JSON object with: "style_analysis" (1 elegant sentence on how to style this luxury Sanditi piece) and "upsells" (an array of exactly 3 highly specific luxury Indian accessories like "Polki Choker", "Velvet Potli" that match this outfit. Each object must have a "name", "price" like "Rs. 2,500", and a short "reason"). RETURN ONLY RAW JSON.` },
-                    { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
-                ],
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            style_analysis: { type: Type.STRING },
-                            upsells: {
-                                type: Type.ARRAY,
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: { name: { type: Type.STRING }, price: { type: Type.STRING }, reason: { type: Type.STRING } }
+            try {
+                const textResponse = await ai.models.generateContent({
+                    model: "gemini-2.5-flash", 
+                    contents: [
+                        { text: `Analyze the garment in Image 2. Return a valid JSON object with: "style_analysis" (1 elegant sentence on how to style this luxury Sanditi piece) and "upsells" (an array of exactly 3 highly specific luxury Indian accessories like "Polki Choker", "Velvet Potli" that match this outfit. Each object must have a "name", "price" like "Rs. 2,500", and a short "reason"). RETURN ONLY RAW JSON.` },
+                        { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
+                    ],
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                style_analysis: { type: Type.STRING },
+                                upsells: {
+                                    type: Type.ARRAY,
+                                    items: {
+                                        type: Type.OBJECT,
+                                        properties: { name: { type: Type.STRING }, price: { type: Type.STRING }, reason: { type: Type.STRING } }
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
 
-            try {
-                let rawText = textResponse.text() || "{}";
+                // THE CRITICAL FIX: textResponse.text (property), not textResponse.text() (function)
+                let rawText = textResponse.text || "{}";
                 rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                 stylingData = JSON.parse(rawText);
+                console.log("✅ [SERVER] Styling Data parsed successfully!");
             } catch (e) {
-                console.error("❌ [SERVER] JSON parse failed.", e);
+                console.error("❌ [SERVER] Styling engine error:", e.message);
             }
 
         } else {
