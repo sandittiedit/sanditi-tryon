@@ -14,7 +14,6 @@ const upload = multer({
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// NEW: Smart Auto-Retry System for Google's 503 Traffic Jams
 async function generateImageWithRetry(imagePrompt, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -25,12 +24,11 @@ async function generateImageWithRetry(imagePrompt, maxRetries = 3) {
             });
             return imageResponse;
         } catch (error) {
-            // If it's a 503 Traffic error and we haven't hit our max retries, wait and try again
             if (error.status === 503 && attempt < maxRetries) {
-                console.log(`⚠️ [SERVER] Google is busy (503). Retrying attempt ${attempt + 1} in 2 seconds...`);
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                console.log(`⚠️ [SERVER] Google is busy (503). Retrying attempt ${attempt + 1}...`);
+                await new Promise(resolve => setTimeout(resolve, 3000)); 
             } else {
-                throw error; // If it's a different error, or we are out of retries, fail.
+                throw error;
             }
         }
     }
@@ -40,55 +38,44 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
     console.log("🚀 [SERVER] New request received");
     
     try {
+        const customBackground = req.body.backgroundPrompt; 
         let finalImageBase64 = null;
         let stylingData = {};
 
+        // MODE 1: VIRTUAL TRY-ON & STYLING ADVICE
         if (req.files && req.files['garmentImage']) {
-            console.log("📸 [SERVER] Generating Virtual Try-On Image...");
+            console.log("📸 [SERVER] Generating Virtual Try-On...");
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-            // 1. GENERATE THE IMAGE 
             const imagePrompt = [
-                { text: `VIRTUAL TRY-ON TASK. Image 1 is the customer. Image 2 is the target garment (luxury Sanditi Pakistani-style digital printed/embroidered co-ord or kaftan). TASK: Redraw Image 1 so the customer is wearing the exact garment from Image 2. MANDATORY: You MUST preserve the customer's exact face, identity, hair, and the original background from Image 1. Only the clothing should change. Do not hallucinate or change the patterns.` },
+                { text: `VIRTUAL TRY-ON TASK. Image 1 is the customer. Image 2 is the target garment. TASK: Redraw Image 1 so the customer is wearing the exact garment from Image 2. MANDATORY: You MUST preserve the customer's exact face, identity, hair, and the original background from Image 1. Only the clothing should change. Do not hallucinate patterns.` },
                 { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
                 { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
             ];
 
-            // Use our new auto-retry function
             const imageResponse = await generateImageWithRetry(imagePrompt);
-
             const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
             if (generatedPart?.inlineData) {
                 finalImageBase64 = generatedPart.inlineData.data;
-                console.log("✅ [SERVER] Image generated successfully!");
             } else {
                 throw new Error("AI did not return image data.");
             }
 
-            // 2. GENERATE THE STYLING & UPSELL
-            console.log(`🛍️ [SERVER] Generating Styling & Upsell Data...`);
+            // PURE STYLING ADVICE (NO FAKE PRODUCTS)
+            console.log(`🛍️ [SERVER] Generating Styling Advice...`);
             try {
                 const textResponse = await ai.models.generateContent({
                     model: "gemini-2.5-flash", 
                     contents: [
-                        { text: `Analyze the garment in Image 2. Return a valid JSON object with: "style_analysis" (1 elegant sentence on how to style this luxury Sanditi piece) and "upsells" (an array of exactly 3 highly specific luxury Indian accessories like "Polki Choker", "Velvet Potli" that match this outfit. Each object must have a "name", "price" like "Rs. 2,500", and a short "reason"). RETURN ONLY RAW JSON.` },
+                        { text: `Analyze the garment in Image 2. Provide luxury fashion styling advice. Return a valid JSON object with exactly ONE key: "style_advice". The value must be a 2-3 sentence paragraph suggesting the ideal occasion, matching jewelry, makeup, and footwear for this outfit. RETURN ONLY RAW JSON.` },
                         { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
                     ],
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: {
                             type: Type.OBJECT,
-                            properties: {
-                                style_analysis: { type: Type.STRING },
-                                upsells: {
-                                    type: Type.ARRAY,
-                                    items: {
-                                        type: Type.OBJECT,
-                                        properties: { name: { type: Type.STRING }, price: { type: Type.STRING }, reason: { type: Type.STRING } }
-                                    }
-                                }
-                            }
+                            properties: { style_advice: { type: Type.STRING } }
                         }
                     }
                 });
@@ -96,20 +83,34 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                 let rawText = textResponse.text || "{}";
                 rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                 stylingData = JSON.parse(rawText);
-                console.log("✅ [SERVER] Styling Data parsed successfully!");
             } catch (e) {
                 console.error("❌ [SERVER] Styling engine error:", e.message);
             }
 
+        } 
+        // MODE 2: MOMENTS BACKGROUND SWAP (Restored!)
+        else if (customBackground && req.files && req.files['userImage']) {
+            console.log(`🖼️ [SERVER] Generating Moment -> ${customBackground}`);
+            const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
+            
+            const imagePrompt = [
+                { text: `BACKGROUND REPLACEMENT. Change the background to: ${customBackground}. The person, their clothing, and their face MUST remain 100% identical. Blend the lighting seamlessly.` },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
+            ];
+
+            const imageResponse = await generateImageWithRetry(imagePrompt);
+            const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (generatedPart?.inlineData) {
+                finalImageBase64 = generatedPart.inlineData.data;
+            } else {
+                throw new Error("AI failed to create moment.");
+            }
         } else {
-            return res.status(400).json({ error: "Missing required images." });
+            return res.status(400).json({ error: "Missing required inputs." });
         }
 
         console.log("📦 [SERVER] Sending final package to Shopify!");
-        res.json({ 
-            imageBase64: finalImageBase64,
-            ...stylingData
-        });
+        res.json({ imageBase64: finalImageBase64, ...stylingData });
 
     } catch (error) {
         console.error("❌ [SERVER] Fatal AI Error:", error);
