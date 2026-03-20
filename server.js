@@ -62,20 +62,21 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                 throw new Error("AI did not return image data.");
             }
 
-            // PURE STYLING ADVICE (NO FAKE PRODUCTS)
+            // STYLING ADVICE (Now strictly enforced with accessory suggestions)
             console.log(`🛍️ [SERVER] Generating Styling Advice...`);
             try {
                 const textResponse = await ai.models.generateContent({
                     model: "gemini-2.5-flash", 
                     contents: [
-                        { text: `Analyze the garment in Image 2. Provide luxury fashion styling advice. Return a valid JSON object with exactly ONE key: "style_advice". The value must be a 2-3 sentence paragraph suggesting the ideal occasion, matching jewelry, makeup, and footwear for this outfit. RETURN ONLY RAW JSON.` },
+                        { text: `You are an elite luxury fashion stylist. Analyze the garment in Image 2. Write a 3-sentence styling guide. You MUST suggest specific luxury jewelry, a type of handbag, and footwear that will uplift and complement this exact outfit. Return a valid JSON object with the exact key "style_advice".` },
                         { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
                     ],
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: {
                             type: Type.OBJECT,
-                            properties: { style_advice: { type: Type.STRING } }
+                            properties: { style_advice: { type: Type.STRING } },
+                            required: ["style_advice"] // <--- THIS FORCES THE AI TO NOT BE LAZY
                         }
                     }
                 });
@@ -83,12 +84,13 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                 let rawText = textResponse.text || "{}";
                 rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                 stylingData = JSON.parse(rawText);
+                console.log("✅ [SERVER] Styling Data parsed successfully:", stylingData);
             } catch (e) {
                 console.error("❌ [SERVER] Styling engine error:", e.message);
             }
 
         } 
-        // MODE 2: MOMENTS BACKGROUND SWAP (Restored!)
+        // MODE 2: MOMENTS BACKGROUND SWAP
         else if (customBackground && req.files && req.files['userImage']) {
             console.log(`🖼️ [SERVER] Generating Moment -> ${customBackground}`);
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
