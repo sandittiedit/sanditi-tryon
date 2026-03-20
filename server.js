@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const app = express();
 app.use(cors()); 
@@ -16,74 +16,82 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         const height = req.body.height || "Unknown";
         const weight = req.body.weight || "Unknown";
         
-        let prompt = [];
+        let finalImageBase64 = null;
+        let finalRecommendedSize = null;
 
-        // MODE 1: VIRTUAL TRY-ON & SIZE RECOMMENDATION
+        // ==========================================================
+        // STEP 1: GENERATE THE VISUAL IMAGE (Using the dedicated Image Model)
+        // ==========================================================
+        let imagePrompt = [];
+
+        // MODE 1: VIRTUAL TRY-ON
         if (req.files['garmentImage']) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-            let textPrompt = `You are an elite master tailor and visual AI for Sanditi, a luxury Indian brand. 
-            
-            TASK 1 (Visual): Transfer the exact garment from Image 2 onto the person in Image 1.
-            - ZERO HALLUCINATIONS: Do not alter the garment's print, embroidery, color, or structural design. It must be identical.
-            - FIT: Drape it accurately on their body.
-            - PRESERVE USER: Keep their face and identity exactly the same.
-            
-            TASK 2 (Sizing): The user is ${height} tall and weighs ${weight}. Based on their photo and these dimensions, calculate their perfect size (XS, S, M, L, or XL).
-            
-            OUTPUT FORMAT:
-            You must return a valid JSON object with EXACTLY two keys:
-            1. "recommended_size": The string value of the size (e.g., "M").
-            2. "image_base64": The base64 string of the generated try-on image.`;
-
-            prompt = [
-                { text: textPrompt },
+            imagePrompt = [
+                { text: `ACT AS: Elite Luxury Virtual Fitting Room AI for Sanditi. TASK: Transfer the exact garment from Image 2 onto the customer in Image 1. CRITICAL CONSTRAINTS: 1. PERFECT FIT: Drape it realistically to match the height and posture in Image 1. 2. ZERO REDESIGN: Preserve the exact Pakistani-style digital prints, embroidery, kaftan drapes, and colors of Image 2. It must be identical. 3. PRESERVE USER: Keep the face and identity exactly the same. 4. ENVIRONMENT: Maintain the original background from Image 1.` },
                 { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
                 { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
             ];
         } 
-        
-        // MODE 2: CHEAP MOMENT GENERATION (Only 1 image input)
+        // MODE 2: MOMENT GENERATION
         else if (customBackground) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             
-            let textPrompt = `You are a luxury fashion photographer. 
-            TASK: Change the background of Image 1.
-            - Do not change the person, their face, or their clothing. 
-            - Completely remove the old background.
-            - Place them in a hyper-realistic setting matching this description: ${customBackground}.
-            
-            OUTPUT FORMAT:
-            You must return a valid JSON object with EXACTLY one key:
-            1. "image_base64": The base64 string of the generated moment image.`;
-
-            prompt = [
-                { text: textPrompt },
+            imagePrompt = [
+                { text: `ACT AS: Luxury Fashion Photographer. TASK: Change the background of Image 1. CRITICAL CONSTRAINTS: 1. Do not change the person, their face, or their clothing. 2. Completely scrape and remove the old background. 3. Place them in a hyper-realistic setting matching this description: ${customBackground}.` },
                 { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
             ];
         }
 
-        // We force Gemini to return JSON so your server doesn't crash trying to read text
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash", // We use the standard model but force image base64 output in JSON
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json"
-            }
+        // Call the specific Gemini Image Generation Model
+        const imageResponse = await ai.models.generateContent({
+            model: "gemini-3.1-flash-image", 
+            contents: imagePrompt,
+            config: { responseModalities: ["IMAGE"] }
         });
 
-        // Parse the JSON response from Gemini
-        const aiResult = JSON.parse(response.text());
-        
-        if (aiResult.image_base64) {
-             res.json({ 
-                 imageBase64: aiResult.image_base64,
-                 recommendedSize: aiResult.recommended_size || null
-             });
+        const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+        if (generatedPart?.inlineData) {
+            finalImageBase64 = generatedPart.inlineData.data;
         } else {
-             res.status(500).json({ error: "AI failed to generate visual data."});
+            throw new Error("AI failed to generate visual data.");
         }
+
+        // ==========================================================
+        // STEP 2: CALCULATE SMART SIZING (Only for Initial Try-On)
+        // ==========================================================
+        if (req.files['garmentImage'] && height !== "Unknown" && weight !== "Unknown") {
+            const sizingResponse = await ai.models.generateContent({
+                model: "gemini-3.1-flash-lite", // Fast, cheap text-only model
+                contents: `A customer shopping for modern Indian female garments is ${height} tall and weighs ${weight}. Based on standard luxury ethnic wear sizing (XS, S, M, L, XL, XXL), what is their most likely perfect size? Return ONLY a valid JSON object with the key "recommended_size" and the string value.`,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: { recommended_size: { type: Type.STRING } },
+                        required: ["recommended_size"]
+                    }
+                }
+            });
+
+            try {
+                const sizingResult = JSON.parse(sizingResponse.text());
+                finalRecommendedSize = sizingResult.recommended_size;
+            } catch (e) {
+                console.error("Sizing JSON parse failed", e);
+            }
+        }
+
+        // ==========================================================
+        // STEP 3: SEND EVERYTHING BACK TO SHOPIFY
+        // ==========================================================
+        res.json({ 
+            imageBase64: finalImageBase64,
+            recommendedSize: finalRecommendedSize
+        });
+
     } catch (error) {
         console.error("Error from AI:", error);
         res.status(500).json({ error: "Failed to process request." });
