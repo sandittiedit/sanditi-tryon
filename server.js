@@ -7,16 +7,15 @@ const app = express();
 app.use(cors()); 
 app.use(express.json());
 
-// FIXED: Added strict memory limits so large phone photos don't crash your Render server
 const upload = multer({ 
     storage: multer.memoryStorage(),
-    limits: { fileSize: 8 * 1024 * 1024 } // 8MB limit per file
+    limits: { fileSize: 8 * 1024 * 1024 } 
 });
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentImage' }]), async (req, res) => {
-    console.log("🚀 [SERVER] New request received from Shopify");
+    console.log("🚀 [SERVER] New request received");
     
     try {
         const customBackground = req.body.backgroundPrompt; 
@@ -24,75 +23,97 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         const weight = req.body.weight || "Unknown";
         
         let finalImageBase64 = null;
-        let finalRecommendedSize = null;
-        let imagePrompt = [];
+        let stylingData = {};
 
         if (req.files && req.files['garmentImage']) {
-            console.log("📸 [SERVER] Mode 1: Processing Virtual Try-On...");
+            console.log("📸 [SERVER] Mode 1: Virtual Try-On...");
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
-            imagePrompt = [
-                { text: `CRITICAL IMAGE EDITING TASK. You are a highly restricted image compositing tool. INPUT 1: The target garment. INPUT 2: The customer photo. MANDATORY RULES: 1. DO NOT generate a new person. You must use the exact face, hair, body shape, and posture of the customer in Input 2. 2. ONLY replace the clothing. Map the garment from Input 1 onto the customer. 3. Keep the original background of Input 2 untouched. 4. If you generate a different person, you have failed.` },
-                { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } },
-                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
+            // FIX 1: EXPLICIT CLOTHING SWAP PROMPT
+            const imagePrompt = [
+                { text: `VIRTUAL TRY-ON TASK. Image 1 is the customer. Image 2 is the garment. TASK: Redraw Image 1 so the customer is wearing the exact garment from Image 2. You MUST preserve the customer's exact face, identity, hair, and the original background from Image 1. Only the clothing should change to match Image 2.` },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
+                { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
             ];
-        } else if (customBackground) {
-            console.log(`🖼️ [SERVER] Mode 2: Generating Moment -> ${customBackground}`);
-            const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
-            
-            imagePrompt = [
-                { text: `CRITICAL BACKGROUND REPLACEMENT TASK. INPUT: A customer wearing a specific outfit. MANDATORY RULES: 1. DO NOT change the person in the foreground. Keep their face, expression, posture, and clothing 100% identical. DO NOT alter a single pixel of the human. 2. ONLY change the background. 3. Extract the foreground subject perfectly and place them ${customBackground}. 4. Match the environmental lighting to the new background seamlessly.` },
-                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
-            ];
-        } else {
-            console.error("❌ [SERVER] Missing images. Aborting.");
-            return res.status(400).json({ error: "Missing required images." });
-        }
 
-        console.log("⏳ [SERVER] Sending request to Google Gemini API...");
-        const imageResponse = await ai.models.generateContent({
-            model: "gemini-3.1-flash-image-preview", 
-            contents: imagePrompt,
-            config: { responseModalities: ["IMAGE"] }
-        });
+            const imageResponse = await ai.models.generateContent({
+                model: "gemini-3.1-flash-image-preview", 
+                contents: imagePrompt,
+                config: { responseModalities: ["IMAGE"] }
+            });
 
-        const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (generatedPart?.inlineData) {
-            console.log("✅ [SERVER] Image generated successfully!");
-            finalImageBase64 = generatedPart.inlineData.data;
-        } else {
-            throw new Error("AI did not return image data.");
-        }
+            const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (generatedPart?.inlineData) {
+                finalImageBase64 = generatedPart.inlineData.data;
+                console.log("✅ [SERVER] Image generated!");
+            } else {
+                throw new Error("AI did not return image data.");
+            }
 
-        if (req.files && req.files['garmentImage'] && height !== "Unknown" && weight !== "Unknown") {
-            console.log(`📏 [SERVER] Calculating size for Height: ${height}, Weight: ${weight}...`);
+            // FIX 2: COMBINED SIZING + UPSELL ENGINE
+            console.log(`📏 [SERVER] Calculating size and styling...`);
             const sizingResponse = await ai.models.generateContent({
                 model: "gemini-3.1-flash-lite-preview", 
-                contents: `A customer shopping for modern Indian female garments is ${height} tall and weighs ${weight}. Based on standard luxury ethnic wear sizing (XS, S, M, L, XL, XXL), what is their most likely perfect size? Return ONLY a valid JSON object with the key "recommended_size" and the string value.`,
+                contents: [
+                    { text: `Analyze the customer (Height: ${height}, Weight: ${weight}) and the garment. Return a valid JSON object with: "recommended_size" (XS, S, M, L, XL), "style_analysis" (1 sentence on how it suits them), and "upsells" (an array of 3 highly specific luxury accessories that match the outfit, each object having "name", "price" like "Rs. 2,500", and "reason"). DO NOT USE MARKDOWN TAGS. Return RAW JSON.` },
+                    { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
+                    { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
+                ],
                 config: {
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
-                        properties: { recommended_size: { type: Type.STRING } },
-                        required: ["recommended_size"]
+                        properties: {
+                            recommended_size: { type: Type.STRING },
+                            style_analysis: { type: Type.STRING },
+                            upsells: {
+                                type: Type.ARRAY,
+                                items: {
+                                    type: Type.OBJECT,
+                                    properties: { name: { type: Type.STRING }, price: { type: Type.STRING }, reason: { type: Type.STRING } }
+                                }
+                            }
+                        }
                     }
                 }
             });
 
             try {
-                const sizingResult = JSON.parse(sizingResponse.text());
-                finalRecommendedSize = sizingResult.recommended_size;
-                console.log(`👕 [SERVER] Recommended Size: ${finalRecommendedSize}`);
+                // FIX 3: STRIP MARKDOWN THAT CRASHES JSON.PARSE
+                let rawText = sizingResponse.text() || "{}";
+                rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                stylingData = JSON.parse(rawText);
+                console.log(`👕 [SERVER] Data Parsed Successfully!`);
             } catch (e) {
-                console.error("❌ [SERVER] Sizing failed to parse.");
+                console.error("❌ [SERVER] JSON parse failed.", e);
+            }
+
+        } else if (customBackground) {
+            console.log(`🖼️ [SERVER] Mode 2: Generating Moment -> ${customBackground}`);
+            const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
+            
+            const imagePrompt = [
+                { text: `BACKGROUND REPLACEMENT. Change the background to: ${customBackground}. The person, their clothing, and their face MUST remain 100% identical. Blend the lighting.` },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
+            ];
+
+            const imageResponse = await ai.models.generateContent({
+                model: "gemini-3.1-flash-image-preview", 
+                contents: imagePrompt,
+                config: { responseModalities: ["IMAGE"] }
+            });
+
+            const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (generatedPart?.inlineData) {
+                finalImageBase64 = generatedPart.inlineData.data;
             }
         }
 
         console.log("📦 [SERVER] Sending final package to Shopify!");
         res.json({ 
             imageBase64: finalImageBase64,
-            recommendedSize: finalRecommendedSize
+            ...stylingData
         });
 
     } catch (error) {
@@ -101,4 +122,4 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log('✅ Sanditi Try-On Server is live!'));
+app.listen(process.env.PORT || 3000, () => console.log('✅ Sanditi Server Live!'));
