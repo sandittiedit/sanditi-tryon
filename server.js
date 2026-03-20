@@ -19,35 +19,36 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         let finalImageBase64 = null;
         let finalRecommendedSize = null;
 
-        // ==========================================================
-        // STEP 1: GENERATE THE VISUAL IMAGE (Using the dedicated Image Model)
-        // ==========================================================
         let imagePrompt = [];
 
-        // MODE 1: VIRTUAL TRY-ON
+        // ==========================================================
+        // MODE 1: THE INITIAL TRY-ON
+        // ==========================================================
         if (req.files['garmentImage']) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             const garmentImageBase64 = req.files['garmentImage'][0].buffer.toString("base64");
 
             imagePrompt = [
-                { text: `ACT AS: Elite Luxury Virtual Fitting Room AI for Sanditi. TASK: Transfer the exact garment from Image 2 onto the customer in Image 1. CRITICAL CONSTRAINTS: 1. PERFECT FIT: Drape it realistically to match the height and posture in Image 1. 2. ZERO REDESIGN: Preserve the exact Pakistani-style digital prints, embroidery, kaftan drapes, and colors of Image 2. It must be identical. 3. PRESERVE USER: Keep the face and identity exactly the same. 4. ENVIRONMENT: Maintain the original background from Image 1.` },
-                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } },
-                { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
+                { text: `CRITICAL IMAGE EDITING TASK. You are a highly restricted image compositing tool. INPUT 1: The target garment. INPUT 2: The customer photo. MANDATORY RULES: 1. DO NOT generate a new person. You must use the exact face, hair, body shape, and posture of the customer in Input 2. 2. ONLY replace the clothing. Map the garment from Input 1 onto the customer. 3. Keep the original background of Input 2 untouched. 4. If you generate a different person, you have failed.` },
+                { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } },
+                { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
             ];
         } 
-        // MODE 2: MOMENT GENERATION
+        // ==========================================================
+        // MODE 2: THE CHEAP MOMENT GENERATOR
+        // ==========================================================
         else if (customBackground) {
             const userImageBase64 = req.files['userImage'][0].buffer.toString("base64");
             
             imagePrompt = [
-                { text: `ACT AS: Luxury Fashion Photographer. TASK: Change the background of Image 1. CRITICAL CONSTRAINTS: 1. Do not change the person, their face, or their clothing. 2. Completely scrape and remove the old background. 3. Place them in a hyper-realistic setting matching this description: ${customBackground}.` },
+                { text: `CRITICAL BACKGROUND REPLACEMENT TASK. INPUT: A customer wearing a specific outfit. MANDATORY RULES: 1. DO NOT change the person in the foreground. Keep their face, expression, posture, and clothing 100% identical. DO NOT alter a single pixel of the human. 2. ONLY change the background. 3. Extract the foreground subject perfectly and place them ${customBackground}. 4. Match the environmental lighting to the new background seamlessly.` },
                 { inlineData: { mimeType: req.files['userImage'][0].mimetype, data: userImageBase64 } }
             ];
         }
 
-        // Call the specific Gemini Image Generation Model
+        // Call the exact PREVIEW model that is working on your live app
         const imageResponse = await ai.models.generateContent({
-            model: "gemini-3.1-flash-image", 
+            model: "gemini-3.1-flash-image-preview", 
             contents: imagePrompt,
             config: { responseModalities: ["IMAGE"] }
         });
@@ -60,11 +61,11 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
         }
 
         // ==========================================================
-        // STEP 2: CALCULATE SMART SIZING (Only for Initial Try-On)
+        // STEP 2: CALCULATE SMART SIZING
         // ==========================================================
         if (req.files['garmentImage'] && height !== "Unknown" && weight !== "Unknown") {
             const sizingResponse = await ai.models.generateContent({
-                model: "gemini-3.1-flash-lite", // Fast, cheap text-only model
+                model: "gemini-3.1-flash-lite-preview", 
                 contents: `A customer shopping for modern Indian female garments is ${height} tall and weighs ${weight}. Based on standard luxury ethnic wear sizing (XS, S, M, L, XL, XXL), what is their most likely perfect size? Return ONLY a valid JSON object with the key "recommended_size" and the string value.`,
                 config: {
                     responseMimeType: "application/json",
@@ -84,9 +85,6 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
             }
         }
 
-        // ==========================================================
-        // STEP 3: SEND EVERYTHING BACK TO SHOPIFY
-        // ==========================================================
         res.json({ 
             imageBase64: finalImageBase64,
             recommendedSize: finalRecommendedSize
