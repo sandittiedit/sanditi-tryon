@@ -34,7 +34,7 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
             ];
 
             const imageResponse = await ai.models.generateContent({
-                model: "gemini-3.1-flash-image-preview", 
+                model: "gemini-3.1-flash-image", 
                 contents: imagePrompt,
                 config: { responseModalities: ["IMAGE"] }
             });
