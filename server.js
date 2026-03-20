@@ -14,6 +14,28 @@ const upload = multer({
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// NEW: Smart Auto-Retry System for Google's 503 Traffic Jams
+async function generateImageWithRetry(imagePrompt, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const imageResponse = await ai.models.generateContent({
+                model: "gemini-3.1-flash-image-preview", 
+                contents: imagePrompt,
+                config: { responseModalities: ["IMAGE"] }
+            });
+            return imageResponse;
+        } catch (error) {
+            // If it's a 503 Traffic error and we haven't hit our max retries, wait and try again
+            if (error.status === 503 && attempt < maxRetries) {
+                console.log(`⚠️ [SERVER] Google is busy (503). Retrying attempt ${attempt + 1} in 2 seconds...`);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+            } else {
+                throw error; // If it's a different error, or we are out of retries, fail.
+            }
+        }
+    }
+}
+
 app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentImage' }]), async (req, res) => {
     console.log("🚀 [SERVER] New request received");
     
@@ -33,15 +55,13 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                 { inlineData: { mimeType: req.files['garmentImage'][0].mimetype, data: garmentImageBase64 } }
             ];
 
-            const imageResponse = await ai.models.generateContent({
-                model: "gemini-3.1-flash-image", 
-                contents: imagePrompt,
-                config: { responseModalities: ["IMAGE"] }
-            });
+            // Use our new auto-retry function
+            const imageResponse = await generateImageWithRetry(imagePrompt);
 
             const generatedPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
             if (generatedPart?.inlineData) {
                 finalImageBase64 = generatedPart.inlineData.data;
+                console.log("✅ [SERVER] Image generated successfully!");
             } else {
                 throw new Error("AI did not return image data.");
             }
@@ -73,7 +93,6 @@ app.post('/api/try-on', upload.fields([{ name: 'userImage' }, { name: 'garmentIm
                     }
                 });
 
-                // THE CRITICAL FIX: textResponse.text (property), not textResponse.text() (function)
                 let rawText = textResponse.text || "{}";
                 rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                 stylingData = JSON.parse(rawText);
