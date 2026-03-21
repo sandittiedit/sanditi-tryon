@@ -18,7 +18,7 @@ async function generateImageWithRetry(imagePrompt, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             const imageResponse = await ai.models.generateContent({
-                model: "gemini-3.1-flash-image-preview", 
+                model: "gemini-2.5-flash-image", 
                 contents: imagePrompt,
                 config: { responseModalities: ["IMAGE"] }
             });
