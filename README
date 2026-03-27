@@ -1,14 +1,99 @@
-Sanditi Virtual Try-On
-An open-source virtual try-on system designed for fashion brands, developers, and apparel businesses to digitally visualize garments on models.
+Sanditi AI Virtual Try-On
+
+An AI-powered virtual try-on system that enables realistic garment swapping on human images using multimodal generative models.
+
+Built for fashion brands, designers, and ecommerce platforms to reduce sampling costs and enhance digital merchandising workflows.
+
+⸻
+
 🚀 Features
-Upload garment images and model images
-Apply garments onto models digitally
-Lightweight and fast processing
-Built for real-world fashion and ecommerce use
-🧠 Use Cases
-Preview designs before physical sampling
-Reduce sampling and production costs
-Enhance e-commerce product visualization
-Assist designers in rapid prototyping
+	•	👕 AI Virtual Try-On
+	•	Upload a model image and garment image
+	•	Automatically swaps clothing with high realism
+	•	Preserves face, pose, and identity
+	•	🎨 Background / Moment Generation
+	•	Replace backgrounds using text prompts
+	•	Keeps subject and outfit unchanged
+	•	Ideal for campaign and lifestyle visuals
+	•	🛍️ AI Styling Assistant
+	•	Generates styling suggestions (jewelry, footwear, handbags)
+	•	Clean, brand-free recommendations
+	•	Structured JSON output
+	•	⚡ Smart Model Routing
+	•	Premium model for try-on accuracy
+	•	Cost-efficient model for background edits
+	•	🔁 Retry System
+	•	Handles API overload (503 errors)
+	•	Improves reliability in production
+
+⸻
+
 💼 Real-World Usage
-This system is actively used in a production workflow for apparel development and digital sampling.
+
+This system is actively used in a production workflow for apparel development and digital sampling, helping reduce physical sampling costs and accelerate design decisions.
+
+⸻
+
+🧠 How It Works
+
+Mode 1: Virtual Try-On
+	•	Input: user image + garment image
+	•	Output: realistic clothing swap
+
+Mode 2: Background Generation
+	•	Input: user image + text prompt
+	•	Output: same person in a new environment
+
+⸻
+
+🛠 Tech Stack
+	•	Node.js
+	•	Express.js
+	•	Multer
+	•	Google Generative AI (Gemini)
+	•	CORS
+
+⸻
+
+📡 API Endpoint
+
+POST /api/try-on
+
+Form Data:
+	•	userImage (required)
+	•	garmentImage (required for try-on)
+	•	backgroundPrompt (optional)
+
+🔧 Installation
+git clone https://github.com/sandittiedit/sanditi-tryon
+cd sanditi-tryon
+npm install
+
+Create .env file:
+GEMINI_API_KEY=your_api_key_here
+
+Run:
+node server.js
+
+📦 Response
+{
+  "imageBase64": "...",
+  "style_advice": "..."
+}
+
+📸 Demo
+
+(Add before/after images here)
+
+⸻
+
+🤝 Contributions
+
+Contributions, issues, and feature suggestions are welcome.
+
+⸻
+
+📄 License
+
+MIT License
+:::
